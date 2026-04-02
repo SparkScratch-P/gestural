@@ -1,0 +1,1705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GESTURAL — 3D Model Controller</title>
+
+<!-- Three.js + GLTFLoader -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<!-- MediaPipe Hands -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg: #080a0f;
+    --bg2: #0d1017;
+    --bg3: #131720;
+    --surface: #161c27;
+    --surface2: #1e2635;
+    --border: #ffffff0f;
+    --border2: #ffffff18;
+    --accent: #00e5ff;
+    --accent2: #7c3aed;
+    --accent3: #10b981;
+    --warn: #f59e0b;
+    --text: #e8edf5;
+    --text2: #8899aa;
+    --text3: #4a5568;
+    --glow: 0 0 20px #00e5ff33;
+    --glow2: 0 0 40px #00e5ff22;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    height: 100vh;
+    overflow: hidden;
+    cursor: none;
+  }
+
+  /* Custom cursor */
+  #cursor {
+    position: fixed;
+    width: 12px; height: 12px;
+    border: 1.5px solid var(--accent);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 9999;
+    transform: translate(-50%,-50%);
+    transition: transform 0.1s, border-color 0.2s;
+  }
+  #cursor-trail {
+    position: fixed;
+    width: 32px; height: 32px;
+    border: 1px solid #00e5ff33;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 9998;
+    transform: translate(-50%,-50%);
+    transition: left 0.15s ease, top 0.15s ease;
+  }
+
+  /* Background grid */
+  body::before {
+    content:'';
+    position:fixed;
+    inset:0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events:none;
+    z-index:0;
+    opacity:0.4;
+  }
+
+  /* Ambient glow blobs */
+  .ambient {
+    position:fixed;
+    border-radius:50%;
+    filter:blur(80px);
+    pointer-events:none;
+    z-index:0;
+    opacity:0.07;
+  }
+  .ambient-1 { width:600px;height:600px;background:var(--accent2);top:-200px;right:-100px; }
+  .ambient-2 { width:400px;height:400px;background:var(--accent);bottom:-100px;left:-100px; }
+
+  /* Main layout */
+  #app {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 72px 1fr 280px;
+    grid-template-rows: 56px 1fr 56px;
+    height: 100vh;
+    gap: 0;
+  }
+
+  /* Header */
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #0d1017cc, transparent);
+    backdrop-filter: blur(12px);
+    gap: 24px;
+    position: relative;
+    z-index: 10;
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: 0.15em;
+    color: var(--text);
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--accent); }
+
+  .header-divider {
+    width: 1px; height: 20px;
+    background: var(--border2);
+  }
+
+  .header-tag {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text3);
+    font-family: 'DM Mono', monospace;
+  }
+
+  .header-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border2);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    background: var(--surface);
+    color: var(--text2);
+    transition: all 0.3s;
+  }
+  .status-pill.active {
+    border-color: var(--accent3);
+    color: var(--accent3);
+    background: #10b98112;
+    box-shadow: 0 0 16px #10b98122;
+  }
+  .status-pill.warn {
+    border-color: var(--warn);
+    color: var(--warn);
+    background: #f59e0b10;
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity:1; }
+    50% { opacity:0.3; }
+  }
+
+  /* Left toolbar */
+  .toolbar {
+    grid-row: 2 / 3;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 0;
+    gap: 4px;
+    background: var(--bg2);
+  }
+
+  .tool-btn {
+    width: 44px; height: 44px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: none;
+    transition: all 0.2s;
+    font-size: 16px;
+    position: relative;
+  }
+  .tool-btn:hover, .tool-btn.active {
+    background: var(--surface2);
+    border-color: var(--border2);
+    color: var(--accent);
+    box-shadow: var(--glow);
+  }
+  .tool-sep {
+    width: 24px; height: 1px;
+    background: var(--border);
+    margin: 8px 0;
+  }
+
+  /* Canvas area */
+  #canvas-container {
+    grid-row: 2 / 3;
+    position: relative;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  #three-canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+  }
+
+  /* Drop overlay */
+  #drop-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    pointer-events: all;
+    z-index: 5;
+    transition: opacity 0.4s;
+  }
+
+  #drop-overlay.hidden { opacity:0; pointer-events:none; }
+
+  .drop-icon {
+    width: 80px; height: 80px;
+    border: 2px dashed var(--border2);
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    color: var(--text3);
+    transition: all 0.3s;
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%,100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+  #drop-overlay.dragover .drop-icon {
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: var(--glow2);
+  }
+
+  .drop-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: 0.05em;
+    color: var(--text);
+  }
+  .drop-sub {
+    font-size: 12px;
+    color: var(--text3);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .drop-btn {
+    padding: 10px 28px;
+    border-radius: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    color: var(--accent);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    cursor: none;
+    transition: all 0.2s;
+  }
+  .drop-btn:hover {
+    background: #00e5ff12;
+    border-color: var(--accent);
+    box-shadow: var(--glow);
+  }
+
+  /* Gesture indicator overlay on canvas */
+  #gesture-indicator {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 20px;
+    background: #00000088;
+    border: 1px solid var(--border2);
+    border-radius: 20px;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    backdrop-filter: blur(8px);
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    z-index: 6;
+    white-space: nowrap;
+  }
+  #gesture-indicator.show { opacity:1; }
+
+  /* Hand tracking canvas overlay */
+  #hand-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 4;
+  }
+
+  /* Right panel */
+  .panel {
+    grid-row: 2 / 3;
+    border-left: 1px solid var(--border);
+    background: var(--bg2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-label {
+    font-size: 9px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Camera preview */
+  #cam-preview-wrap {
+    position: relative;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    aspect-ratio: 4/3;
+  }
+
+  #video-el {
+    width: 100%;
+    display: block;
+    opacity: 0;
+    transform: scaleX(-1);
+    transition: opacity 0.4s;
+  }
+  #video-el.visible { opacity: 1; }
+
+  #cam-off-msg {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--text3);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  #cam-off-msg svg { opacity: 0.3; }
+
+  #cam-overlay-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform: scaleX(-1);
+  }
+
+  .cam-toggle {
+    margin-top: 8px;
+    width: 100%;
+    padding: 7px;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    color: var(--text2);
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: none;
+    transition: all 0.2s;
+    text-align: center;
+  }
+  .cam-toggle:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: #00e5ff08;
+  }
+
+  /* Gesture ref cards */
+  .gesture-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .gesture-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: var(--bg3);
+    transition: all 0.2s;
+  }
+  .gesture-card.active-gesture {
+    border-color: var(--accent);
+    background: #00e5ff08;
+    box-shadow: 0 0 12px #00e5ff18;
+  }
+
+  .gesture-icon {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .gesture-name {
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--text2);
+    flex: 1;
+  }
+  .gesture-key {
+    font-size: 9px;
+    color: var(--text3);
+    letter-spacing: 0.05em;
+  }
+
+  /* Model info */
+  .model-info {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text3);
+  }
+  .info-row span:last-child {
+    color: var(--text2);
+    font-family: 'DM Mono', monospace;
+  }
+
+  /* Sliders */
+  .slider-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  .slider-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text3);
+  }
+  .slider-label span:last-child { color: var(--accent); font-family:'DM Mono',monospace; }
+  input[type=range] {
+    width: 100%;
+    -webkit-appearance: none;
+    height: 2px;
+    background: var(--border2);
+    border-radius: 2px;
+    cursor: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+    cursor: none;
+  }
+
+  /* Footer / status bar */
+  footer {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+    gap: 24px;
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 0.1em;
+    position: relative;
+    z-index: 10;
+  }
+
+  .footer-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .footer-item b { color: var(--text2); font-weight: 400; }
+
+  /* Gesture value bar */
+  .val-bar-wrap {
+    flex: 1;
+    height: 2px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-left: auto;
+  }
+  .val-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.1s;
+  }
+
+  /* File list */
+  .file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+  .file-list::-webkit-scrollbar { width: 3px; }
+  .file-list::-webkit-scrollbar-track { background: transparent; }
+  .file-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    cursor: none;
+    background: var(--bg3);
+    border: 1px solid transparent;
+    transition: all 0.2s;
+  }
+  .file-item:hover, .file-item.selected {
+    border-color: var(--accent);
+    background: #00e5ff08;
+  }
+  .file-item-name {
+    font-size: 10px;
+    color: var(--text2);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .file-item-remove {
+    width: 16px; height: 16px;
+    border-radius: 3px;
+    background: transparent;
+    border: none;
+    color: var(--text3);
+    font-size: 10px;
+    cursor: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+  .file-item-remove:hover { color: #ef4444; background: #ef444420; }
+
+  /* Loading spinner */
+  #loader {
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    gap: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+  #loader.show { opacity:1; pointer-events:all; }
+  .spinner {
+    width: 40px; height: 40px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Notifications */
+  #notif {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    padding: 10px 24px;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--text2);
+    backdrop-filter: blur(12px);
+    z-index: 100;
+    opacity: 0;
+    transition: all 0.3s;
+    pointer-events: none;
+  }
+  #notif.show {
+    opacity:1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* Axes gizmo */
+  #gizmo {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    width: 60px; height: 60px;
+    z-index: 4;
+    pointer-events: none;
+  }
+
+  /* Sensitivity settings */
+  .panel-scroll {
+    flex: 1;
+    overflow-y: auto;
+  }
+  .panel-scroll::-webkit-scrollbar { width: 3px; }
+  .panel-scroll::-webkit-scrollbar-track { background: transparent; }
+  .panel-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+  /* Checkbox toggle */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 0;
+  }
+  .toggle-label { font-size: 10px; color: var(--text3); letter-spacing: 0.05em; }
+  .toggle {
+    width: 32px; height: 18px;
+    border-radius: 9px;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    position: relative;
+    cursor: none;
+    transition: background 0.2s;
+  }
+  .toggle.on { background: #00e5ff30; border-color: var(--accent); }
+  .toggle::after {
+    content:'';
+    position: absolute;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--text3);
+    top: 2px; left: 2px;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .toggle.on::after { transform: translateX(14px); background: var(--accent); }
+
+</style>
+</head>
+<body>
+
+<div id="cursor"></div>
+<div id="cursor-trail"></div>
+<div class="ambient ambient-1"></div>
+<div class="ambient ambient-2"></div>
+
+<div id="notif"></div>
+<input type="file" id="file-input" accept=".glb,.gltf" multiple style="display:none">
+
+<div id="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">GESTURAL<span>.</span></div>
+    <div class="header-divider"></div>
+    <div class="header-tag">3D Hand-Gesture Controller</div>
+    <div class="header-right">
+      <div class="status-pill" id="cam-status">
+        <div class="status-dot"></div>
+        Camera Off
+      </div>
+      <div class="status-pill" id="hand-status">
+        <div class="status-dot"></div>
+        No Hand
+      </div>
+      <div class="status-pill" id="model-status">
+        <div class="status-dot"></div>
+        No Model
+      </div>
+    </div>
+  </header>
+
+  <!-- Left toolbar -->
+  <div class="toolbar">
+    <button class="tool-btn active" id="tool-rotate" title="Rotate Mode">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M12 2a10 10 0 0 1 10 10"/><path d="m19 13 3-3-3-3"/><path d="M12 22a10 10 0 0 1-10-10"/><path d="m5 11-3 3 3 3"/>
+      </svg>
+    </button>
+    <button class="tool-btn" id="tool-pan" title="Pan Mode">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3"/>
+      </svg>
+    </button>
+    <button class="tool-btn" id="tool-zoom" title="Zoom Mode">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v6M8 11h6"/>
+      </svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool-btn" id="tool-reset" title="Reset View">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+      </svg>
+    </button>
+    <button class="tool-btn" id="tool-wireframe" title="Wireframe Toggle">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <polygon points="12 2 22 20 2 20"/><line x1="12" y1="2" x2="12" y2="20"/><line x1="2" y1="14" x2="22" y2="14"/>
+      </svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool-btn" id="tool-fullscreen" title="Fullscreen">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- 3D Canvas -->
+  <div id="canvas-container">
+    <canvas id="three-canvas"></canvas>
+    <canvas id="hand-canvas"></canvas>
+
+    <div id="drop-overlay">
+      <div class="drop-icon">⬡</div>
+      <div class="drop-title">Drop a GLB file</div>
+      <div class="drop-sub">or click to browse</div>
+      <button class="drop-btn" onclick="document.getElementById('file-input').click()">Browse Files</button>
+    </div>
+
+    <div id="gesture-indicator"></div>
+
+    <div id="loader">
+      <div class="spinner"></div>
+      <div style="font-size:11px;letter-spacing:0.15em;color:var(--text3);text-transform:uppercase">Loading Model…</div>
+    </div>
+
+    <canvas id="gizmo"></canvas>
+  </div>
+
+  <!-- Right panel -->
+  <div class="panel">
+    <div class="panel-scroll">
+
+      <!-- Camera -->
+      <div class="panel-section">
+        <div class="section-label">Camera Feed</div>
+        <div id="cam-preview-wrap">
+          <video id="video-el" autoplay playsinline muted></video>
+          <canvas id="cam-overlay-canvas"></canvas>
+          <div id="cam-off-msg">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+            </svg>
+            <span>Camera inactive</span>
+          </div>
+        </div>
+        <button class="cam-toggle" id="cam-toggle-btn">⬡ Enable Camera</button>
+      </div>
+
+      <!-- Models -->
+      <div class="panel-section">
+        <div class="section-label">Loaded Models</div>
+        <div class="file-list" id="file-list">
+          <div style="font-size:10px;color:var(--text3);padding:8px;text-align:center">No models loaded</div>
+        </div>
+        <button class="cam-toggle" style="margin-top:8px" onclick="document.getElementById('file-input').click()">
+          ＋ Load GLB / GLTF
+        </button>
+      </div>
+
+      <!-- Gesture Reference -->
+      <div class="panel-section">
+        <div class="section-label">Gestures</div>
+        <div class="gesture-grid" id="gesture-grid">
+          <div class="gesture-card" id="g-rotate"><div class="gesture-icon">✋</div><div><div class="gesture-name">Open Palm (slide)</div><div class="gesture-key">Rotate model (roll)</div></div></div>
+          <div class="gesture-card" id="g-pan"><div class="gesture-icon">✌️</div><div><div class="gesture-name">Two Fingers (slide)</div><div class="gesture-key">Pan / Translate</div></div></div>
+          <div class="gesture-card" id="g-zoom"><div class="gesture-icon">☝️</div><div><div class="gesture-name">Point (1 finger)</div><div class="gesture-key">Zoom in/out</div></div></div>
+          <div class="gesture-card" id="g-roll"><div class="gesture-icon">🤙</div><div><div class="gesture-name">Pinch</div><div class="gesture-key">Fine Roll (Z-axis)</div></div></div>
+          <div class="gesture-card" id="g-depth"><div class="gesture-icon">👊</div><div><div class="gesture-name">Move hand closer/away</div><div class="gesture-key">Zoom out / Zoom in</div></div></div>
+        </div>
+      </div>
+
+      <!-- Sensitivity -->
+      <div class="panel-section">
+        <div class="section-label">Sensitivity</div>
+        <div class="slider-row">
+          <div class="slider-label"><span>Rotate</span><span id="lbl-rotate">1.0</span></div>
+          <input type="range" id="sens-rotate" min="0.1" max="3" step="0.1" value="1.0">
+        </div>
+        <div class="slider-row">
+          <div class="slider-label"><span>Pan</span><span id="lbl-pan">1.0</span></div>
+          <input type="range" id="sens-pan" min="0.1" max="3" step="0.1" value="1.0">
+        </div>
+        <div class="slider-row">
+          <div class="slider-label"><span>Zoom</span><span id="lbl-zoom">1.0</span></div>
+          <input type="range" id="sens-zoom" min="0.1" max="3" step="0.1" value="1.0">
+        </div>
+        <div class="slider-row">
+          <div class="slider-label"><span>Depth Zoom</span><span id="lbl-depth">1.0</span></div>
+          <input type="range" id="sens-depth" min="0.1" max="3" step="0.1" value="1.0">
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div class="panel-section">
+        <div class="section-label">Settings</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Auto-rotate when idle</span>
+          <div class="toggle" id="tog-autorotate" onclick="toggleSetting(this,'autorotate')"></div>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Show hand skeleton</span>
+          <div class="toggle on" id="tog-skeleton" onclick="toggleSetting(this,'skeleton')"></div>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Smooth gestures</span>
+          <div class="toggle on" id="tog-smooth" onclick="toggleSetting(this,'smooth')"></div>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Right hand only</span>
+          <div class="toggle on" id="tog-righthand" onclick="toggleSetting(this,'righthand')"></div>
+        </div>
+      </div>
+
+      <!-- Model Info -->
+      <div class="panel-section" id="model-info-section" style="display:none">
+        <div class="section-label">Model Info</div>
+        <div class="model-info" id="model-info"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-item">FPS <b id="fps-counter">—</b></div>
+    <div class="footer-item">GESTURE <b id="footer-gesture">—</b></div>
+    <div class="footer-item">DEPTH <b id="footer-depth">—</b></div>
+    <div class="footer-item">VERTICES <b id="footer-verts">—</b></div>
+    <div class="val-bar-wrap"><div class="val-bar" id="gesture-bar"></div></div>
+  </footer>
+
+</div>
+
+<!-- Hidden video for mediapipe -->
+<video id="input-video" style="display:none" autoplay playsinline muted></video>
+
+<script>
+// ==================== CURSOR ====================
+const cursor = document.getElementById('cursor');
+const cursorTrail = document.getElementById('cursor-trail');
+document.addEventListener('mousemove', e => {
+  cursor.style.left = e.clientX + 'px';
+  cursor.style.top = e.clientY + 'px';
+  cursorTrail.style.left = e.clientX + 'px';
+  cursorTrail.style.top = e.clientY + 'px';
+});
+
+// ==================== SETTINGS ====================
+const settings = {
+  autorotate: false,
+  skeleton: true,
+  smooth: true,
+  righthand: true
+};
+function toggleSetting(el, key) {
+  settings[key] = !settings[key];
+  el.classList.toggle('on', settings[key]);
+  if (key === 'autorotate' && controls) controls.autoRotate = settings[key];
+}
+
+// ==================== SENSITIVITY ====================
+const sens = { rotate: 1.0, pan: 1.0, zoom: 1.0, depth: 1.0 };
+['rotate','pan','zoom','depth'].forEach(k => {
+  const el = document.getElementById('sens-'+k);
+  el.addEventListener('input', () => {
+    sens[k] = parseFloat(el.value);
+    document.getElementById('lbl-'+k).textContent = parseFloat(el.value).toFixed(1);
+  });
+});
+
+// ==================== THREE.JS SETUP ====================
+const canvas3d = document.getElementById('three-canvas');
+const container = document.getElementById('canvas-container');
+
+const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true, alpha: false });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setClearColor(0x080a0f);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 1000);
+camera.position.set(0, 1.5, 4);
+
+const controls = new THREE.OrbitControls(camera, canvas3d);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 0.5;
+controls.maxDistance = 50;
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+scene.add(ambientLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+dirLight.position.set(5, 8, 5);
+dirLight.castShadow = true;
+scene.add(dirLight);
+const rimLight = new THREE.DirectionalLight(0x00e5ff, 0.3);
+rimLight.position.set(-5, 2, -5);
+scene.add(rimLight);
+const fillLight = new THREE.PointLight(0x7c3aed, 0.5, 20);
+fillLight.position.set(-3, -2, 3);
+scene.add(fillLight);
+
+// Grid helper
+const gridHelper = new THREE.GridHelper(20, 40, 0x1e2635, 0x131720);
+scene.add(gridHelper);
+
+// Model group
+const modelGroup = new THREE.Group();
+scene.add(modelGroup);
+
+// Resize handler
+function resizeRenderer() {
+  const w = container.clientWidth, h = container.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+resizeRenderer();
+new ResizeObserver(resizeRenderer).observe(container);
+
+// Models list
+const loadedModels = [];
+let currentModelIndex = -1;
+const fileData = [];
+
+// Loader
+const loader = new THREE.GLTFLoader();
+const loaderOverlay = document.getElementById('loader');
+
+function showLoader(v) {
+  loaderOverlay.classList.toggle('show', v);
+}
+
+function loadModel(url, name) {
+  showLoader(true);
+  loader.load(url, gltf => {
+    const model = gltf.scene;
+
+    // Auto-scale and center
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scale = 2.5 / maxDim;
+    model.scale.setScalar(scale);
+
+    const center = box.getCenter(new THREE.Vector3());
+    model.position.sub(center.multiplyScalar(scale));
+
+    // Shadows
+    model.traverse(n => {
+      if (n.isMesh) {
+        n.castShadow = true;
+        n.receiveShadow = true;
+      }
+    });
+
+    // Count vertices
+    let vertCount = 0;
+    model.traverse(n => { if (n.isMesh && n.geometry) vertCount += n.geometry.attributes.position?.count || 0; });
+
+    modelGroup.add(model);
+    loadedModels.push({ model, name, vertCount, wireframe: false });
+    currentModelIndex = loadedModels.length - 1;
+
+    // Show only current
+    loadedModels.forEach((m, i) => m.model.visible = i === currentModelIndex);
+
+    updateModelInfo(loadedModels[currentModelIndex]);
+    updateFileList();
+    document.getElementById('drop-overlay').classList.add('hidden');
+    updateStatus('model-status', true, name.replace('.glb',''));
+    document.getElementById('footer-verts').textContent = vertCount.toLocaleString();
+    showLoader(false);
+    notify(`Loaded: ${name}`);
+  }, undefined, err => {
+    console.error(err);
+    showLoader(false);
+    notify('Failed to load model');
+  });
+}
+
+function updateModelInfo(m) {
+  const infoEl = document.getElementById('model-info');
+  const sec = document.getElementById('model-info-section');
+  if (!m) { sec.style.display = 'none'; return; }
+  sec.style.display = 'block';
+  infoEl.innerHTML = `
+    <div class="info-row"><span>Name</span><span>${m.name}</span></div>
+    <div class="info-row"><span>Vertices</span><span>${m.vertCount.toLocaleString()}</span></div>
+    <div class="info-row"><span>Index</span><span>${currentModelIndex + 1} / ${loadedModels.length}</span></div>
+  `;
+}
+
+function updateFileList() {
+  const el = document.getElementById('file-list');
+  if (loadedModels.length === 0) {
+    el.innerHTML = '<div style="font-size:10px;color:var(--text3);padding:8px;text-align:center">No models loaded</div>';
+    return;
+  }
+  el.innerHTML = loadedModels.map((m, i) => `
+    <div class="file-item ${i === currentModelIndex ? 'selected' : ''}" onclick="selectModel(${i})">
+      <span style="font-size:10px;color:var(--accent)">⬡</span>
+      <span class="file-item-name">${m.name}</span>
+      <button class="file-item-remove" onclick="event.stopPropagation();removeModel(${i})">✕</button>
+    </div>
+  `).join('');
+}
+
+function selectModel(i) {
+  currentModelIndex = i;
+  loadedModels.forEach((m, idx) => m.model.visible = idx === i);
+  updateModelInfo(loadedModels[i]);
+  updateFileList();
+}
+
+function removeModel(i) {
+  modelGroup.remove(loadedModels[i].model);
+  loadedModels.splice(i, 1);
+  fileData.splice(i, 1);
+  currentModelIndex = Math.min(currentModelIndex, loadedModels.length - 1);
+  if (loadedModels.length === 0) {
+    document.getElementById('drop-overlay').classList.remove('hidden');
+    updateStatus('model-status', false, 'No Model');
+    document.getElementById('footer-verts').textContent = '—';
+    document.getElementById('model-info-section').style.display = 'none';
+  } else {
+    selectModel(currentModelIndex);
+  }
+  updateFileList();
+}
+
+// Wireframe toggle
+let wireframeOn = false;
+document.getElementById('tool-wireframe').addEventListener('click', () => {
+  wireframeOn = !wireframeOn;
+  document.getElementById('tool-wireframe').classList.toggle('active', wireframeOn);
+  loadedModels.forEach(m => {
+    m.model.traverse(n => {
+      if (n.isMesh && n.material) {
+        if (Array.isArray(n.material)) n.material.forEach(mat => mat.wireframe = wireframeOn);
+        else n.material.wireframe = wireframeOn;
+      }
+    });
+  });
+});
+
+// Reset
+document.getElementById('tool-reset').addEventListener('click', () => {
+  camera.position.set(0, 1.5, 4);
+  camera.lookAt(0, 0, 0);
+  controls.reset();
+  modelGroup.rotation.set(0, 0, 0);
+});
+
+// Fullscreen
+document.getElementById('tool-fullscreen').addEventListener('click', () => {
+  if (!document.fullscreenElement) container.requestFullscreen?.();
+  else document.exitFullscreen?.();
+});
+
+// ==================== FILE DROP ====================
+const dropOverlay = document.getElementById('drop-overlay');
+const fileInput = document.getElementById('file-input');
+
+['dragenter','dragover'].forEach(e => {
+  container.addEventListener(e, ev => { ev.preventDefault(); dropOverlay.classList.add('dragover'); });
+});
+['dragleave','drop'].forEach(e => {
+  container.addEventListener(e, ev => { ev.preventDefault(); dropOverlay.classList.remove('dragover'); });
+});
+container.addEventListener('drop', ev => {
+  const files = Array.from(ev.dataTransfer.files).filter(f => f.name.match(/\.(glb|gltf)$/i));
+  files.forEach(handleFile);
+});
+fileInput.addEventListener('change', ev => {
+  Array.from(ev.target.files).forEach(handleFile);
+  ev.target.value = '';
+});
+
+function handleFile(file) {
+  const url = URL.createObjectURL(file);
+  fileData.push(url);
+  loadModel(url, file.name);
+}
+
+// ==================== STATUS HELPERS ====================
+function updateStatus(id, active, text) {
+  const el = document.getElementById(id);
+  el.className = 'status-pill' + (active ? ' active' : '');
+  el.innerHTML = `<div class="status-dot"></div>${text}`;
+}
+
+// ==================== NOTIFICATIONS ====================
+function notify(msg) {
+  const el = document.getElementById('notif');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ==================== GIZMO ====================
+const gizmoCanvas = document.getElementById('gizmo');
+const gizmoCtx = gizmoCanvas.getContext('2d');
+gizmoCanvas.width = 60; gizmoCanvas.height = 60;
+
+function drawGizmo() {
+  gizmoCtx.clearRect(0, 0, 60, 60);
+  const cx = 30, cy = 30, r = 22;
+  const mat = camera.matrixWorldInverse;
+  const axes = [
+    { dir: new THREE.Vector3(1,0,0), color: '#ef4444', label: 'X' },
+    { dir: new THREE.Vector3(0,1,0), color: '#10b981', label: 'Y' },
+    { dir: new THREE.Vector3(0,0,1), color: '#00e5ff', label: 'Z' },
+  ];
+  const projected = axes.map(ax => {
+    const v = ax.dir.clone().applyMatrix4(mat);
+    return { x: cx + v.x * r, y: cy - v.y * r, color: ax.color, label: ax.label };
+  });
+  projected.forEach(p => {
+    gizmoCtx.strokeStyle = p.color;
+    gizmoCtx.lineWidth = 1.5;
+    gizmoCtx.beginPath();
+    gizmoCtx.moveTo(cx, cy);
+    gizmoCtx.lineTo(p.x, p.y);
+    gizmoCtx.stroke();
+    gizmoCtx.fillStyle = p.color;
+    gizmoCtx.font = '8px DM Mono, monospace';
+    gizmoCtx.fillText(p.label, p.x + 2, p.y + 3);
+  });
+}
+
+// ==================== FPS COUNTER ====================
+let lastTime = performance.now(), fpsCounter = 0, fpsDisplay = 0;
+function updateFPS() {
+  const now = performance.now();
+  fpsCounter++;
+  if (now - lastTime > 500) {
+    fpsDisplay = Math.round(fpsCounter / ((now - lastTime) / 1000));
+    document.getElementById('fps-counter').textContent = fpsDisplay;
+    fpsCounter = 0;
+    lastTime = now;
+  }
+}
+
+// ==================== RENDER LOOP ====================
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  if (settings.autorotate && !isHandTracking) modelGroup.rotation.y += 0.003;
+  renderer.render(scene, camera);
+  drawGizmo();
+  updateFPS();
+  applyGestureSmoothed();
+}
+animate();
+
+// ==================== MEDIAPIPE HANDS ====================
+let cameraActive = false;
+let isHandTracking = false;
+const videoEl = document.getElementById('video-el');
+const inputVideo = document.getElementById('input-video');
+const camOverlay = document.getElementById('cam-overlay-canvas');
+const camOverlayCtx = camOverlay.getContext('2d');
+const handCanvas = document.getElementById('hand-canvas');
+const handCtx = handCanvas.getContext('2d');
+
+// Hand state
+let lastLandmarks = null;
+let prevLandmarks = null;
+let gestureState = 'none';
+let prevGestureState = 'none';
+
+// Smoothing
+const smoothPos = { x: 0, y: 0, z: 0 };
+const targetDelta = { rotX: 0, rotY: 0, panX: 0, panY: 0, zoom: 0, roll: 0 };
+const currentDelta = { rotX: 0, rotY: 0, panX: 0, panY: 0, zoom: 0, roll: 0 };
+
+// Gesture stability: require N consecutive frames of same gesture before switching
+let gestureBuffer = [];
+const GESTURE_LOCK_FRAMES = 5; // frames needed to confirm a new gesture
+let lockedGesture = 'none';
+
+// Depth zoom deadband: ignore small Z changes, only react to large deliberate moves
+let prevWristZ = null;
+const DEPTH_DEADBAND = 0.018;   // min Z change to register
+const DEPTH_MAX     = 0.12;     // clamp wild jumps
+let depthAccum = 0;             // accumulated Z movement past deadband
+
+function classifyGesture(landmarks) {
+  if (!landmarks || landmarks.length < 21) return 'none';
+
+  const tips = [landmarks[8], landmarks[12], landmarks[16], landmarks[20]];
+  const mcps = [landmarks[5], landmarks[9], landmarks[13], landmarks[17]];
+
+  const extended = tips.map((tip, i) => tip.y < mcps[i].y - 0.04);
+  const extCount = extended.filter(Boolean).length;
+
+  const thumbTip = landmarks[4];
+  const thumbMCP = landmarks[2];
+
+  const dx = thumbTip.x - landmarks[8].x;
+  const dy = thumbTip.y - landmarks[8].y;
+  const pinchDist = Math.sqrt(dx*dx + dy*dy);
+  const isPinch = pinchDist < 0.06;
+
+  // Open palm (3-4 fingers) → rotate via palm-slide direction
+  if (extCount >= 3 && !isPinch) return 'rotate';
+
+  // Two fingers (index+middle, no ring/pinky) → pan
+  if (extended[0] && extended[1] && !extended[2] && !extended[3] && !isPinch) return 'pan';
+
+  // One finger (index only) → zoom
+  if (extended[0] && !extended[1] && !extended[2] && !extended[3] && !isPinch) return 'zoom';
+
+  // Pinch → fine roll
+  if (isPinch && extCount <= 1) return 'pinch';
+
+  // Fist → depth only (no finger-gesture, just hand proximity)
+  if (extCount === 0 && !isPinch) return 'depth';
+
+  return 'rotate'; // safe fallback
+}
+
+// Debounce gesture changes: only switch after GESTURE_LOCK_FRAMES consistent frames
+function getStableGesture(raw) {
+  gestureBuffer.push(raw);
+  if (gestureBuffer.length > GESTURE_LOCK_FRAMES) gestureBuffer.shift();
+  // If all recent frames agree, switch
+  const allSame = gestureBuffer.every(g => g === gestureBuffer[gestureBuffer.length - 1]);
+  if (allSame) lockedGesture = gestureBuffer[gestureBuffer.length - 1];
+  return lockedGesture;
+}
+
+// Landmark to screen coords helper
+function lmToScreen(lm, w, h) {
+  return { x: (1 - lm.x) * w, y: lm.y * h }; // mirrored
+}
+
+function onHandResults(results) {
+  // Update sizes
+  const w = handCanvas.width = container.clientWidth;
+  const h = handCanvas.height = container.clientHeight;
+  handCtx.clearRect(0, 0, w, h);
+
+  // Camera overlay
+  const cw = camOverlay.width = camOverlay.offsetWidth;
+  const ch = camOverlay.height = camOverlay.offsetHeight;
+  camOverlayCtx.clearRect(0, 0, cw, ch);
+
+  // Filter for right hand (appears as left in mirrored view)
+  let handLandmarks = null;
+  if (results.multiHandLandmarks && results.multiHandedness) {
+    for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+      const hand = results.multiHandedness[i];
+      // In mirrored view, right hand is labeled "Left" by mediapipe
+      if (!settings.righthand || hand.label === 'Left') {
+        handLandmarks = results.multiHandLandmarks[i];
+        break;
+      }
+    }
+    if (!handLandmarks && results.multiHandLandmarks.length > 0) {
+      handLandmarks = results.multiHandLandmarks[0];
+    }
+  }
+
+  if (handLandmarks) {
+    isHandTracking = true;
+    updateStatus('hand-status', true, 'Hand Detected');
+
+    const rawGesture = classifyGesture(handLandmarks);
+    const gesture = getStableGesture(rawGesture);
+    gestureState = gesture;
+
+    // Draw on main canvas (skeleton)
+    if (settings.skeleton) {
+      drawHandSkeleton(handCtx, handLandmarks, w, h, gesture);
+    }
+
+    // Draw on camera overlay
+    drawHandSkeleton(camOverlayCtx, handLandmarks, cw, ch, gesture, 0.5);
+
+    // Compute gesture delta
+    if (prevLandmarks) {
+      computeGestureDelta(prevLandmarks, handLandmarks, gesture, w, h);
+    }
+
+    // --- Depth-based zoom with deadband ---
+    const wristZ = handLandmarks[0].z;
+    if (prevWristZ !== null) {
+      let rawZDelta = wristZ - prevWristZ;
+      // Clamp to prevent wild jumps
+      rawZDelta = Math.max(-DEPTH_MAX, Math.min(DEPTH_MAX, rawZDelta));
+      // Only accumulate past the deadband
+      const sign = Math.sign(rawZDelta);
+      const mag = Math.abs(rawZDelta);
+      if (mag > DEPTH_DEADBAND) {
+        const effective = (mag - DEPTH_DEADBAND) * sign;
+        // Closer hand (positive Z in mediapipe) → zoom OUT; farther → zoom IN
+        // mediapipe Z: more negative = hand pushed toward screen (closer)
+        // So: wristZ decreasing (going negative) = hand moved closer → zoom out
+        targetDelta.zoom += -effective * 18 * sens.depth;
+      }
+    }
+    prevWristZ = wristZ;
+
+    prevLandmarks = handLandmarks;
+    lastLandmarks = handLandmarks;
+
+    // Depth display
+    const depthPct = Math.round((-wristZ + 0.3) * 200);
+    document.getElementById('footer-depth').textContent = depthPct + '%';
+
+    // UI
+    showGestureIndicator(gesture);
+    highlightGestureCard(gesture);
+    document.getElementById('footer-gesture').textContent = gesture.toUpperCase();
+    document.getElementById('gesture-bar').style.width = (extendedFingerCount(handLandmarks) / 4 * 100) + '%';
+
+  } else {
+    isHandTracking = false;
+    prevLandmarks = null;
+    prevWristZ = null;
+    gestureBuffer = [];
+    lockedGesture = 'none';
+    gestureState = 'none';
+    updateStatus('hand-status', false, 'No Hand');
+    document.getElementById('footer-gesture').textContent = '—';
+    document.getElementById('footer-depth').textContent = '—';
+    document.getElementById('gesture-bar').style.width = '0%';
+    clearGestureCards();
+    hideGestureIndicator();
+  }
+}
+
+function extendedFingerCount(lm) {
+  const tips = [lm[8], lm[12], lm[16], lm[20]];
+  const mcps = [lm[5], lm[9], lm[13], lm[17]];
+  return tips.filter((t, i) => t.y < mcps[i].y - 0.04).length;
+}
+
+function computeGestureDelta(prev, curr, gesture, w, h) {
+  // Mirror X (camera is mirrored)
+  const dx = -(curr[0].x - prev[0].x); // wrist X delta
+  const dy =  (curr[0].y - prev[0].y); // wrist Y delta
+
+  const ROT_SCALE  = 14.0;   // palm slide → rotation
+  const PAN_SCALE  = 0.055;  // two-finger → pan (strong)
+  const ZOOM_SCALE = 10.0;   // index finger → zoom
+
+  if (gesture === 'rotate') {
+    // Open palm sliding = model rolls along the direction of slide.
+    // Slide LEFT/RIGHT  → rotate around Y axis
+    // Slide UP/DOWN     → rotate around X axis
+    // Diagonal → both
+    targetDelta.rotY += dx * ROT_SCALE * sens.rotate;
+    targetDelta.rotX += dy * ROT_SCALE * sens.rotate;
+
+  } else if (gesture === 'pan') {
+    // Two-finger slide = strong pan
+    targetDelta.panX += dx * PAN_SCALE * sens.pan;
+    targetDelta.panY += -dy * PAN_SCALE * sens.pan;
+
+  } else if (gesture === 'zoom') {
+    // Index-finger up/down = zoom
+    const idxDy = curr[8].y - prev[8].y;
+    targetDelta.zoom += -idxDy * ZOOM_SCALE * sens.zoom;
+
+  } else if (gesture === 'pinch') {
+    // Pinch angle change = Z-roll, but ONLY apply if change is small (anti-hysteria)
+    const thumbTip = curr[4], idxTip = curr[8];
+    const prevThumb = prev[4], prevIdx = prev[8];
+    const angle     = Math.atan2(idxTip.y - thumbTip.y,  -(idxTip.x - thumbTip.x));
+    const prevAngle = Math.atan2(prevIdx.y - prevThumb.y, -(prevIdx.x - prevThumb.x));
+    let angleDelta = angle - prevAngle;
+    // Wrap to [-PI, PI] and clamp to avoid jumps
+    while (angleDelta >  Math.PI) angleDelta -= 2 * Math.PI;
+    while (angleDelta < -Math.PI) angleDelta += 2 * Math.PI;
+    if (Math.abs(angleDelta) < 0.3) { // ignore large jumps
+      targetDelta.roll += angleDelta * sens.rotate * 1.5;
+    }
+  }
+  // depth gesture: no delta here, handled separately via wristZ
+}
+
+function applyGestureSmoothed() {
+  if (!loadedModels.length || currentModelIndex < 0) return;
+  const model = loadedModels[currentModelIndex].model;
+  const smooth = settings.smooth ? 0.15 : 1.0;
+
+  Object.keys(currentDelta).forEach(k => {
+    currentDelta[k] += (targetDelta[k] - currentDelta[k]) * smooth;
+    targetDelta[k] *= 0.65; // decay
+  });
+
+  // Apply rotation (palm slide)
+  if (Math.abs(currentDelta.rotY) > 0.0001) {
+    modelGroup.rotation.y += currentDelta.rotY * 0.05;
+  }
+  if (Math.abs(currentDelta.rotX) > 0.0001) {
+    modelGroup.rotation.x += currentDelta.rotX * 0.05;
+  }
+  if (Math.abs(currentDelta.roll) > 0.0001) {
+    modelGroup.rotation.z += currentDelta.roll * 0.5;
+  }
+
+  // Pan (stronger)
+  if (Math.abs(currentDelta.panX) > 0.0001) {
+    camera.position.x -= currentDelta.panX;
+    controls.target.x -= currentDelta.panX;
+  }
+  if (Math.abs(currentDelta.panY) > 0.0001) {
+    camera.position.y -= currentDelta.panY;
+    controls.target.y -= currentDelta.panY;
+  }
+
+  // Zoom
+  if (Math.abs(currentDelta.zoom) > 0.0001) {
+    const dir = camera.position.clone().sub(controls.target).normalize();
+    const dist = camera.position.distanceTo(controls.target);
+    const newDist = Math.max(0.5, Math.min(50, dist - currentDelta.zoom * 0.08));
+    camera.position.copy(controls.target).addScaledVector(dir, newDist);
+  }
+}
+
+// ==================== HAND SKELETON DRAWING ====================
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17]
+];
+
+function drawHandSkeleton(ctx, lm, w, h, gesture, alpha = 1) {
+  const gestureColors = {
+    rotate: '#00e5ff',
+    pan: '#10b981',
+    zoom: '#f59e0b',
+    pinch: '#7c3aed',
+    depth: '#ef4444',
+    none: '#ffffff'
+  };
+  const color = gestureColors[gesture] || '#ffffff';
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Connections
+  HAND_CONNECTIONS.forEach(([a, b]) => {
+    const pa = lmToScreen(lm[a], w, h);
+    const pb = lmToScreen(lm[b], w, h);
+    ctx.strokeStyle = color + '66';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(pa.x, pa.y);
+    ctx.lineTo(pb.x, pb.y);
+    ctx.stroke();
+  });
+
+  // Joints
+  lm.forEach((pt, i) => {
+    const p = lmToScreen(pt, w, h);
+    const isTip = [4,8,12,16,20].includes(i);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, isTip ? 5 : 3, 0, Math.PI * 2);
+    ctx.fillStyle = isTip ? color : color + '88';
+    ctx.fill();
+    if (isTip) {
+      ctx.strokeStyle = color + '44';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  });
+
+  ctx.restore();
+}
+
+// ==================== GESTURE UI ====================
+const gestureMap = {
+  rotate: 'g-rotate',
+  pan:    'g-pan',
+  zoom:   'g-zoom',
+  pinch:  'g-roll',
+  depth:  'g-depth'
+};
+
+let gestureIndicatorTimeout;
+function showGestureIndicator(gesture) {
+  const el = document.getElementById('gesture-indicator');
+  const labels = {
+    rotate: '✋ ROLLING',
+    pan:    '✌️ PANNING',
+    zoom:   '☝️ ZOOMING',
+    pinch:  '🤙 Z-ROLL',
+    depth:  '👊 DEPTH ZOOM'
+  };
+  el.textContent = labels[gesture] || '';
+  el.classList.toggle('show', !!labels[gesture]);
+}
+function hideGestureIndicator() {
+  document.getElementById('gesture-indicator').classList.remove('show');
+}
+function highlightGestureCard(gesture) {
+  Object.keys(gestureMap).forEach(g => {
+    document.getElementById(gestureMap[g])?.classList.toggle('active-gesture', g === gesture);
+  });
+}
+function clearGestureCards() {
+  Object.values(gestureMap).forEach(id => document.getElementById(id)?.classList.remove('active-gesture'));
+}
+
+// ==================== CAMERA SETUP ====================
+let mpHands = null;
+let mpCamera = null;
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
+    inputVideo.srcObject = stream;
+    videoEl.srcObject = stream;
+    videoEl.classList.add('visible');
+    document.getElementById('cam-off-msg').style.display = 'none';
+    cameraActive = true;
+
+    updateStatus('cam-status', true, 'Camera On');
+    document.getElementById('cam-toggle-btn').textContent = '⬡ Disable Camera';
+
+    // Init MediaPipe
+    if (!mpHands) {
+      mpHands = new Hands({
+        locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      mpHands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.6
+      });
+      mpHands.onResults(onHandResults);
+    }
+
+    mpCamera = new Camera(inputVideo, {
+      onFrame: async () => {
+        await mpHands.send({ image: inputVideo });
+      },
+      width: 640,
+      height: 480
+    });
+    mpCamera.start();
+    notify('Hand tracking started');
+  } catch (err) {
+    console.error(err);
+    notify('Camera access denied');
+    updateStatus('cam-status', false, 'Camera Error');
+  }
+}
+
+function stopCamera() {
+  if (mpCamera) mpCamera.stop();
+  if (inputVideo.srcObject) inputVideo.srcObject.getTracks().forEach(t => t.stop());
+  if (videoEl.srcObject) videoEl.srcObject = null;
+  videoEl.classList.remove('visible');
+  document.getElementById('cam-off-msg').style.display = 'flex';
+  cameraActive = false;
+  isHandTracking = false;
+  updateStatus('cam-status', false, 'Camera Off');
+  updateStatus('hand-status', false, 'No Hand');
+  document.getElementById('cam-toggle-btn').textContent = '⬡ Enable Camera';
+  const w = handCanvas.width, h = handCanvas.height;
+  handCtx.clearRect(0, 0, w, h);
+  notify('Camera stopped');
+}
+
+document.getElementById('cam-toggle-btn').addEventListener('click', () => {
+  if (cameraActive) stopCamera();
+  else startCamera();
+});
+
+// ==================== TOOL BUTTONS ====================
+['rotate','pan','zoom'].forEach(mode => {
+  document.getElementById('tool-'+mode).addEventListener('click', () => {
+    ['rotate','pan','zoom'].forEach(m => document.getElementById('tool-'+m).classList.remove('active'));
+    document.getElementById('tool-'+mode).classList.add('active');
+  });
+});
+
+// ==================== DROP ZONE CLICK ====================
+dropOverlay.addEventListener('click', e => {
+  if (e.target === dropOverlay || e.target.classList.contains('drop-icon') ||
+      e.target.classList.contains('drop-title') || e.target.classList.contains('drop-sub')) {
+    document.getElementById('file-input').click();
+  }
+});
+
+// ==================== KEYBOARD SHORTCUTS ====================
+document.addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') document.getElementById('tool-reset').click();
+  if (e.key === 'c' || e.key === 'C') document.getElementById('cam-toggle-btn').click();
+  if (e.key === 'w' || e.key === 'W') document.getElementById('tool-wireframe').click();
+  if (e.key === 'f' || e.key === 'F') document.getElementById('tool-fullscreen').click();
+});
+
+// Notify on load
+setTimeout(() => notify('Drop a GLB file to begin · Press C for camera'), 500);
+
+</script>
+</body>
+</html>
